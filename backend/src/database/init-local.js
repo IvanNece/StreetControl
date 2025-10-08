@@ -13,8 +13,8 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const DB_PATH = join(__dirname, '../../data/streetcontrol.db');
-const SCHEMA_PATH = join(__dirname, 'local/schema.sql');
+const DB_PATH = join(__dirname, '../../data/street_control.db');
+const SCHEMA_PATH = join(__dirname, 'local/init_local_schema.sql');
 
 /**
  * Initialize local SQLite database
