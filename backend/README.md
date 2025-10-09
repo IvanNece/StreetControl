@@ -1,105 +1,109 @@
 # StreetControl Backend
 
-Backend per la gestione di competizioni Streetlifting con architettura dual-database (locale + remoto).
+Backend server for managing Streetlifting competitions with dual-database architecture (local SQLite + remote PostgreSQL).
 
-## 🏗️ Architettura
+## Tech Stack
 
-- **Database Locale (SQLite)**: Gestione offline della competizione in tempo reale
-- **Database Remoto (PostgreSQL/Supabase)**: Archivio storico, record nazionali, classifiche
-- **Sincronizzazione**: Sistema ID-agnostic per upload risultati a fine gara
+- **Node.js** + Express.js + Socket.IO
+- **SQLite3** (local offline database)
+- **PostgreSQL** (Supabase remote database)
+- **ES Modules** (import/export)
 
-## 📦 Tecnologie
+## Quick Start
 
-- Node.js + ES Modules
-- SQLite3 (database locale)
-- PostgreSQL (database remoto via Supabase)
-- dotenv (configurazione)
-
-## 🚀 Setup Iniziale
-
-### 1. Installazione
+### 1. Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 2. Configurazione
+### 2. Environment Configuration
 
-Crea un file `.env` nella root del progetto:
+Create `.env` file in backend root:
 
 ```env
+PORT=3000
+NODE_ENV=development
+CORS_ORIGIN=http://localhost:5173
+
+# Local Database
+DATABASE_LOCAL_PATH=./data/street_control.db
+
+# Remote Database (Supabase)
 DATABASE_REMOTE_URL=postgresql://user:password@host:5432/database
+
+# Socket.IO
+SOCKET_PING_TIMEOUT=60000
+SOCKET_PING_INTERVAL=25000
 ```
 
-> 💡 Ottieni la connection string da Supabase: Settings → Database → Connection string (URI)
+### 3. Initialize Remote Database
 
-### 3. Inizializzazione Database Remoto
+Execute `src/database/remote/init_remote_schema.sql` in Supabase SQL Editor to create tables and seed data.
 
-Copia e incolla il contenuto di `src/database/remote/init_remote_schema.sql` nel **SQL Editor** di Supabase ed esegui + `query per inserire la federazione iniziale`.
-
-Questo creerà:
-- Tabelle standard (federazioni, categorie peso/età)
-- Tabelle storiche (atleti, gare, risultati, record)
-- Dati iniziali (13 categorie peso, 7 categorie età, record placeholder)
-
-### 4. Inizializzazione Database Locale
+### 4. Initialize Local Database
 
 ```bash
 npm run init-db
 ```
 
-Crea il database SQLite locale (`data/street_control.db`) con lo schema completo per gestire la gara.
+Creates SQLite database at `data/street_control.db` with schema for competition management.
 
-### 5. Popolazione Dati di Test
+### 5. Seed Test Data (Optional)
 
 ```bash
 npm run seed
 ```
 
-Questo script:
-1. Sincronizza categorie e federazioni dal database remoto
-2. Genera dati di test locali:
-   - 30 atleti (uomini e donne in varie categorie)
-   - 1 gara completa (Campionato Italiano 2025)
-   - 3 giudici
-   - 2 flight, 4 gruppi
-   - 120 tentativi (openers per 4 alzate)
+Populates local database with test data (30 athletes, 1 meet, 3 judges, 2 flights, 120 attempts).
 
-## 📊 Flusso di Lavoro
+## Development
 
-### Durante la Gara (Offline)
+### Start Development Server
 
-Il sistema lavora **completamente offline** usando il database SQLite locale:
+```bash
+npm run dev
+```
 
-1. **Setup**: Creazione gara, registrazione atleti
-2. **Pesatura**: Inserimento peso corporeo e categoria
-3. **Gestione Tentativi**: Registrazione alzate con stato (VALID/INVALID)
-4. **Classifiche in Tempo Reale**: Calcolo automatico punteggi e piazzamenti
+Server runs on `http://localhost:3000` with auto-reload (nodemon).
 
-### Dopo la Gara (Sincronizzazione)
+### Start Production Server
 
-Al termine della competizione, sincronizza i risultati con il database remoto:
+```bash
+npm start
+```
+
+### Test Phase 2.1 Implementation
+
+```bash
+node test/test-2.1-endpoints.js
+```
+
+Runs automated test suite (7 tests) to verify server, database, Socket.IO, and error handling.
+
+## API Endpoints
+
+- **GET** `/` - Server info
+- **GET** `/api` - API documentation
+- **GET** `/api/health` - Health check
+
+## Workflow
+
+### During Competition (Offline)
+
+System operates fully offline using SQLite local database.
+
+### After Competition (Sync)
+
+Synchronize results to remote database:
 
 ```bash
 node src/database/sync.js <MEET_CODE>
 ```
 
-**Esempio:**
-```bash
-node src/database/sync.js SLI-2025-ITALIA-01
-```
+Example: `node src/database/sync.js SLI-2025-ITALIA-01`
 
-### Cosa fa il Sync?
-
-1. **Sincronizza Atleti** → Carica su `athletes_history` (per CF univoco)
-2. **Crea/Aggiorna Gara** → Inserisce in `public_meets` (usando `meet_code` univoco)
-3. **Upload Risultati** → Popola `public_results` con:
-   - Mapping atleti per CF (ID-agnostic)
-   - Mapping categorie per nome
-   - Calcolo ranking (`final_placing`) per categoria
-4. **Aggiorna Record** → Controlla e aggiorna `public_records` se battuti
-
-> 🔑 **ID-Agnostic**: Il sistema usa codici univoci (CF per atleti, `meet_code` per gare, nomi per categorie) invece di ID autoincrementali, evitando conflitti tra database locale e remoto.
+Syncs athletes, meet data, results, and updates records using ID-agnostic design (CF codes, meet_code, category names).
 
 
 
