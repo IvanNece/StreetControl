@@ -170,9 +170,9 @@ async function generateSampleData() {
 
       // 2. Sample Meet
       console.log('📝 Creating sample meet...');
-      db.run(`INSERT INTO meets (federation_id, name, meet_type, start_date, level, regulation_code, lifts_json) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [1, 'Campionato Italiano Streetlifting 2025', 'FULL', '2025-11-15', 'NAZIONALE', 'WL_COEFF_2025', '["MU","PU","DIP","SQ"]'],
+      db.run(`INSERT INTO meets (federation_id, meet_code, name, meet_type, start_date, level, regulation_code, lifts_json) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [1, 'SLI-2025-ITALIA-01', 'Campionato Italiano Streetlifting 2025', 'FULL', '2025-11-15', 'NAZIONALE', 'WL_COEFF_2025', '["MU","PU","DIP","SQ"]'],
         function(err) {
           if (err) return reject(err);
           const meetId = this.lastID;
@@ -253,7 +253,7 @@ async function generateSampleData() {
               };
 
               for (const [lift, weight] of Object.entries(weights)) {
-                attemptsStmt.run(regId, lift, 1, weight, 'PENDING');
+                attemptsStmt.run(regId, lift, 1, weight, 'VALID');
               }
             }
             attemptsStmt.finalize();

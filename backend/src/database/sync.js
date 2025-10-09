@@ -1,8 +1,28 @@
 /**
  * Database Synchronization Service
  * 
- * Syncs local SQLite data to remote PostgreSQL at the end of competition
- * This uploads results, updates records, and archives the meet
+ * 🎯 PURPOSE: Synchronizes competition data from local SQLite to remote PostgreSQL
+ * 
+ * 📊 WHAT IT DOES (in order):
+ * 1. Syncs athletes to remote athletes_history (by CF - codice fiscale)
+ * 2. Creates/updates meet record in remote public_meets (by meet_code)
+ * 3. Uploads results to remote public_results with:
+ *    - Athlete linkage (finds remote athlete_id by CF)
+ *    - Category mapping (maps local category IDs to remote by name)
+ *    - Ranking calculation (final_placing within same category)
+ * 4. Checks and updates records in remote public_records:
+ *    - Compares all valid lifts against existing records
+ *    - Updates records if new weight > current record
+ *    - Uses athlete_cf for record holder tracking
+ * 
+ * 🔑 KEY FEATURES:
+ * - ID-agnostic: Uses CF for athletes, meet_code for meets, names for categories
+ * - Works across different databases (SQLite ≠ PostgreSQL IDs)
+ * - Reusable: Can sync any meet by its unique code
+ * - Handles missing athletes (athlete_id can be NULL in results)
+ * 
+ * 🚀 USAGE: node src/database/sync.js <meet_code>
+ * Example: node src/database/sync.js SLI-2025-ROMA-01
  */
 
 import sqlite3 from 'sqlite3';
@@ -17,12 +37,12 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const DB_PATH = join(__dirname, '../../data/streetcontrol.db');
+const DB_PATH = join(__dirname, '../../data/street_control.db');
 
 /**
  * Synchronize local competition data to remote database
  */
-async function syncToRemote(meetId) {
+async function syncToRemote(meetCode) {
   console.log('🔄 Starting synchronization to remote database...\n');
 
   if (!process.env.DATABASE_REMOTE_URL) {
@@ -43,29 +63,30 @@ async function syncToRemote(meetId) {
     const remoteClient = await remotePool.connect();
     console.log('✅ Connected to both databases\n');
 
-    // 1. Get meet data from local
+    // 1. Get meet data from local by meet_code
     console.log('📊 Fetching meet data from local database...');
-    const meet = await getMeetData(localDb, meetId);
+    const meet = await getMeetData(localDb, meetCode);
     
     if (!meet) {
-      throw new Error(`Meet with ID ${meetId} not found`);
+      throw new Error(`Meet with code "${meetCode}" not found`);
     }
 
+    console.log(`   Meet Code: ${meet.meet_code}`);
     console.log(`   Meet: ${meet.name}`);
     console.log(`   Date: ${meet.start_date}`);
     console.log(`   Level: ${meet.level}\n`);
 
     // 2. Get all results from local
     console.log('📊 Fetching results from local database...');
-    const results = await getResults(localDb, meetId);
+    const results = await getResults(localDb, meet.id);
     console.log(`   Found ${results.length} results\n`);
 
     // 3. Sync athletes to athletes_history
     console.log('👥 Syncing athletes to remote...');
-    await syncAthletes(localDb, remoteClient, meetId);
+    await syncAthletes(localDb, remoteClient, meet.id);
 
-    // 4. Insert meet into public_meets
-    console.log('📝 Creating meet record in remote...');
+    // 4. Insert/update meet into public_meets by meet_code
+    console.log('📝 Creating/updating meet record in remote...');
     const remoteMeetId = await createRemoteMeet(remoteClient, meet);
     console.log(`   Remote meet ID: ${remoteMeetId}\n`);
 
@@ -76,7 +97,7 @@ async function syncToRemote(meetId) {
 
     // 6. Check and update records
     console.log('🏆 Checking for new records...');
-    const newRecords = await checkAndUpdateRecords(localDb, remoteClient, results);
+    const newRecords = await checkAndUpdateRecords(localDb, remoteClient, results, meet.meet_code);
     if (newRecords.length > 0) {
       console.log(`   🎉 ${newRecords.length} new record(s) set!`);
       newRecords.forEach(r => {
@@ -101,13 +122,13 @@ async function syncToRemote(meetId) {
 }
 
 /**
- * Get meet data from local database
+ * Get meet data from local database by meet_code
  */
-function getMeetData(db, meetId) {
+function getMeetData(db, meetCode) {
   return new Promise((resolve, reject) => {
     db.get(
-      'SELECT * FROM meets WHERE id = ?',
-      [meetId],
+      'SELECT * FROM meets WHERE meet_code = ?',
+      [meetCode],
       (err, row) => {
         if (err) reject(err);
         else resolve(row);
@@ -187,7 +208,7 @@ async function syncAthletes(localDb, remoteClient, meetId) {
 }
 
 /**
- * Create meet record in remote database
+ * Create or update meet record in remote database using meet_code
  */
 async function createRemoteMeet(client, meet) {
   // Get the first available federation (STREETLIFTING ITALIA)
@@ -199,19 +220,29 @@ async function createRemoteMeet(client, meet) {
   
   const federationId = fedResult.rows[0].id;
   
+  // Insert or update using meet_code as unique identifier
   const result = await client.query(`
-    INSERT INTO public_meets (federation_id, name, date, level, regulation_code, lifts_json)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO public_meets (federation_id, meet_code, name, date, level, regulation_code, lifts_json)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (meet_code) DO UPDATE SET
+      name = EXCLUDED.name,
+      date = EXCLUDED.date,
+      level = EXCLUDED.level,
+      regulation_code = EXCLUDED.regulation_code,
+      lifts_json = EXCLUDED.lifts_json
     RETURNING id
-  `, [federationId, meet.name, meet.start_date, meet.level, meet.regulation_code, meet.lifts_json]);
+  `, [federationId, meet.meet_code, meet.name, meet.start_date, meet.level, meet.regulation_code, meet.lifts_json]);
   
   return result.rows[0].id;
 }
 
 /**
- * Upload results to remote database
+ * Upload results to remote database with rankings
  */
 async function uploadResults(client, remoteMeetId, results, localDb) {
+  // First pass: collect all results with mapped IDs and calculated data
+  const mappedResults = [];
+  
   for (const result of results) {
     // Get category names from local DB
     const weightCatName = await new Promise((resolve, reject) => {
@@ -252,24 +283,71 @@ async function uploadResults(client, remoteMeetId, results, localDb) {
     const remoteWeightCatId = remoteWeightCat.rows[0].id;
     const remoteAgeCatId = remoteAgeCat.rows[0].id;
 
+    // Find athlete_id in remote by CF (codice fiscale)
+    const remoteAthlete = await client.query(
+      'SELECT id FROM athletes_history WHERE cf = $1',
+      [result.cf]
+    );
+    
+    const remoteAthleteId = remoteAthlete.rows.length > 0 ? remoteAthlete.rows[0].id : null;
+
     // Calculate total (sum of valid lifts)
     const total = (result.best_mu || 0) + (result.best_pu || 0) + 
                   (result.best_dip || 0) + (result.best_sq || 0) + (result.best_mp || 0);
     
-    // Calculate points (simplified - should use regulation formula)
-    const points = total * 1.0; // Placeholder
+    // Calculate points (simplified - should use regulation formula based on bodyweight)
+    // For now: points = total (will be improved with Wilks/IPF formula)
+    const points = total;
 
+    mappedResults.push({
+      ...result,
+      remoteWeightCatId,
+      remoteAgeCatId,
+      remoteAthleteId,
+      total,
+      points
+    });
+  }
+
+  // Sort by points descending for ranking (within same weight category)
+  const resultsByCategory = {};
+  for (const r of mappedResults) {
+    const key = `${r.remoteWeightCatId}-${r.remoteAgeCatId}`;
+    if (!resultsByCategory[key]) {
+      resultsByCategory[key] = [];
+    }
+    resultsByCategory[key].push(r);
+  }
+
+  // Sort each category by points (DESC) and assign final_placing
+  for (const key in resultsByCategory) {
+    resultsByCategory[key].sort((a, b) => b.points - a.points);
+    resultsByCategory[key].forEach((r, index) => {
+      r.final_placing = index + 1;
+    });
+  }
+
+  // Second pass: insert all results with final_placing
+  for (const result of mappedResults) {
     await client.query(`
       INSERT INTO public_results 
-        (meet_id, first_name, last_name, weight_cat_id, age_cat_id, 
+        (meet_id, athlete_id, weight_cat_id, age_cat_id, 
          best_mu_kg, best_pu_kg, best_dip_kg, best_sq_kg, best_mp_kg, 
-         total_kg, points)
+         total_kg, points, final_placing)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     `, [
-      remoteMeetId, result.first_name, result.last_name, 
-      remoteWeightCatId, remoteAgeCatId,
-      result.best_mu, result.best_pu, result.best_dip, result.best_sq, result.best_mp,
-      total, points
+      remoteMeetId,
+      result.remoteAthleteId, // Can be NULL if athlete not in history
+      result.remoteWeightCatId,
+      result.remoteAgeCatId,
+      result.best_mu,
+      result.best_pu,
+      result.best_dip,
+      result.best_sq,
+      result.best_mp,
+      result.total,
+      result.points,
+      result.final_placing
     ]);
   }
 }
@@ -277,7 +355,7 @@ async function uploadResults(client, remoteMeetId, results, localDb) {
 /**
  * Check for new records and update
  */
-async function checkAndUpdateRecords(localDb, remoteClient, results) {
+async function checkAndUpdateRecords(localDb, remoteClient, results, meetCode) {
   const newRecords = [];
   
   // Check each result for potential records
@@ -333,26 +411,30 @@ async function checkAndUpdateRecords(localDb, remoteClient, results) {
       `, [remoteWeightCatId, remoteAgeCatId, lift.name]);
 
       if (currentRecord.rows.length === 0 || lift.weight > currentRecord.rows[0].record_kg) {
-        // New record!
+        // New record! Update using athlete_cf and meet_code
         await remoteClient.query(`
           INSERT INTO public_records 
-            (weight_cat_id, age_cat_id, lift, record_kg, holder_first, holder_last, set_date)
+            (weight_cat_id, age_cat_id, lift, record_kg, athlete_cf, meet_code, set_date)
           VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE)
           ON CONFLICT (weight_cat_id, age_cat_id, lift) DO UPDATE SET
             record_kg = EXCLUDED.record_kg,
-            holder_first = EXCLUDED.holder_first,
-            holder_last = EXCLUDED.holder_last,
+            athlete_cf = EXCLUDED.athlete_cf,
+            meet_code = EXCLUDED.meet_code,
             set_date = EXCLUDED.set_date
         `, [
-          remoteWeightCatId, remoteAgeCatId, lift.name,
-          lift.weight, result.first_name, result.last_name
+          remoteWeightCatId,
+          remoteAgeCatId,
+          lift.name,
+          lift.weight,
+          result.cf,      // Use codice fiscale for athlete tracking
+          meetCode        // Use meet_code with FK to public_meets
         ]);
 
         newRecords.push({
           lift: lift.name,
           category: `${weightCatName} / ${ageCatName}`,
           weight: lift.weight,
-          holder: `${result.first_name} ${result.last_name}`
+          holder: `${result.first_name} ${result.last_name} (${result.cf})`
         });
       }
     }
@@ -362,14 +444,14 @@ async function checkAndUpdateRecords(localDb, remoteClient, results) {
 }
 
 // CLI usage
-const meetId = process.argv[2];
-if (!meetId) {
-  console.log('Usage: node sync.js <meet_id>');
-  console.log('Example: node sync.js 1');
+const meetCode = process.argv[2];
+if (!meetCode) {
+  console.log('Usage: node sync.js <meet_code>');
+  console.log('Example: node sync.js SLI-2025-ROMA-01');
   process.exit(1);
 }
 
-syncToRemote(parseInt(meetId)).catch(err => {
+syncToRemote(meetCode).catch(err => {
   console.error('❌ Sync failed:', err);
   process.exit(1);
 });

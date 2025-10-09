@@ -49,30 +49,13 @@ CREATE TABLE athletes_history (
 CREATE INDEX idx_athletes_history_name ON athletes_history(last_name, first_name);
 
 /* ---------------------------
-   Record ufficiali pubblici (storico)
----------------------------- */
-CREATE TABLE public_records (
-  id               SERIAL PRIMARY KEY,
-  weight_cat_id    INTEGER NOT NULL,
-  age_cat_id       INTEGER NOT NULL,
-  lift             TEXT NOT NULL CHECK (lift IN ('MU','PU','DIP','SQ','MP')),
-  record_kg        NUMERIC(10,2) NOT NULL,
-  meet_name        TEXT,
-  set_date         DATE,
-  athlete_cf     TEXT,
-  UNIQUE (weight_cat_id, age_cat_id, lift),
-  FOREIGN KEY (weight_cat_id) REFERENCES weight_categories_std(id),
-  FOREIGN KEY (age_cat_id)    REFERENCES age_categories_std(id),
-  FOREIGN KEY (athlete_cf)    REFERENCES athletes_history(cf) ON DELETE SET NULL
-);
-CREATE INDEX idx_public_records_lookup ON public_records(weight_cat_id, age_cat_id, lift);
-
-/* ---------------------------
    Gare pubbliche (archivio completo)
+   NOTA: Deve essere creato PRIMA di public_records per la FK
 ---------------------------- */
 CREATE TABLE public_meets (
   id               SERIAL PRIMARY KEY,
   federation_id    INTEGER,
+  meet_code        TEXT NOT NULL UNIQUE,  -- Identificatore univoco cross-database (es: "SLI-2025-ROMA-01")
   name             TEXT NOT NULL,
   date             DATE NOT NULL,
   level            TEXT NOT NULL,         -- "REGIONALE" | "NAZIONALE"
@@ -82,6 +65,27 @@ CREATE TABLE public_meets (
 );
 CREATE INDEX idx_public_meets_date ON public_meets(date DESC);
 CREATE INDEX idx_public_meets_federation ON public_meets(federation_id);
+CREATE INDEX idx_public_meets_code ON public_meets(meet_code);
+
+/* ---------------------------
+   Record ufficiali pubblici (storico)
+---------------------------- */
+CREATE TABLE public_records (
+  id               SERIAL PRIMARY KEY,
+  weight_cat_id    INTEGER NOT NULL,
+  age_cat_id       INTEGER NOT NULL,
+  lift             TEXT NOT NULL CHECK (lift IN ('MU','PU','DIP','SQ','MP')),
+  record_kg        NUMERIC(10,2) NOT NULL,
+  meet_code        TEXT,                  -- FK to public_meets(meet_code) - where record was set
+  set_date         DATE,
+  athlete_cf       TEXT,
+  UNIQUE (weight_cat_id, age_cat_id, lift),
+  FOREIGN KEY (weight_cat_id) REFERENCES weight_categories_std(id),
+  FOREIGN KEY (age_cat_id)    REFERENCES age_categories_std(id),
+  FOREIGN KEY (athlete_cf)    REFERENCES athletes_history(cf) ON DELETE SET NULL,
+  FOREIGN KEY (meet_code)     REFERENCES public_meets(meet_code) ON DELETE SET NULL
+);
+CREATE INDEX idx_public_records_lookup ON public_records(weight_cat_id, age_cat_id, lift);
 
 /* ---------------------------
    Risultati finali per atleta (denormalizzati e leggibili)
@@ -90,8 +94,6 @@ CREATE TABLE public_results (
   id               SERIAL PRIMARY KEY,
   meet_id          INTEGER NOT NULL,
   athlete_id       INTEGER,               -- NULL se atleta non in athletes_history
-  first_name       TEXT NOT NULL,
-  last_name        TEXT NOT NULL,
   weight_cat_id    INTEGER NOT NULL,
   age_cat_id       INTEGER NOT NULL,
   best_mu_kg       NUMERIC(10,2),         -- NULL se lift non prevista
@@ -101,14 +103,14 @@ CREATE TABLE public_results (
   best_mp_kg       NUMERIC(10,2),
   total_kg         NUMERIC(10,2),         -- somma delle best previste dalla gara
   points           NUMERIC(10,2) NOT NULL, -- calcolato in base a regulation_code
-  final_placing          INTEGER,               -- posizione in classifica
+  final_placing    INTEGER,               -- posizione in classifica
   FOREIGN KEY (meet_id)       REFERENCES public_meets(id) ON DELETE CASCADE,
   FOREIGN KEY (athlete_id)    REFERENCES athletes_history(id) ON DELETE SET NULL,
   FOREIGN KEY (weight_cat_id) REFERENCES weight_categories_std(id),
   FOREIGN KEY (age_cat_id)    REFERENCES age_categories_std(id)
 );
 CREATE INDEX idx_public_results_meet_place ON public_results(meet_id, final_placing);
-CREATE INDEX idx_public_results_athlete ON public_results(athlete_cf);
+CREATE INDEX idx_public_results_athlete ON public_results(athlete_id);
 
 /* Initial data std categories */
 
@@ -141,13 +143,13 @@ VALUES
   ('Master III', 60,  69, 5),
   ('Master IV',  70,  NULL, 6);
 
-INSERT INTO public_records (weight_cat_id, age_cat_id, lift, record_kg, meet_name, set_date, athlete_cf)
+INSERT INTO public_records (weight_cat_id, age_cat_id, lift, record_kg, meet_code, set_date, athlete_cf)
 SELECT
     w.id  AS weight_cat_id,
     a.id  AS age_cat_id,
     l.lift,
     0     AS record_kg,
-    'N/A' AS meet_name,
+    NULL  AS meet_code,
     NULL  AS set_date,
     NULL  AS athlete_cf
 FROM weight_categories_std w

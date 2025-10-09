@@ -66,6 +66,7 @@ CREATE INDEX idx_athletes_name ON athletes(last_name, first_name);
 CREATE TABLE meets (
   id               INTEGER PRIMARY KEY,
   federation_id    INTEGER,
+  meet_code        TEXT UNIQUE,           -- Identificatore univoco cross-database (es: "SLI-2025-ROMA-01")
   name             TEXT NOT NULL,
   meet_type        TEXT NOT NULL,        -- "FULL" | "SINGLE" | "CUSTOM"
   start_date       TEXT NOT NULL,        -- ISO date
