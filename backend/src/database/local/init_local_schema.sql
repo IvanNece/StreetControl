@@ -218,13 +218,13 @@ CREATE TABLE records (
   lift_id        TEXT NOT NULL,
   record_kg      REAL NOT NULL,
   bodyweight_kg  REAL NOT NULL,        -- peso dell'atleta quando ha stabilito il record
-  athlete_id     INTEGER,
+  athlete_cf     TEXT,                 -- riferimento diretto al cf dell'atleta
   set_date       TEXT,                 -- ISO date
   UNIQUE (weight_cat_id, age_cat_id, lift_id),
-  FOREIGN KEY (athlete_id)    REFERENCES athletes(id)          ON DELETE SET NULL,
   FOREIGN KEY (weight_cat_id) REFERENCES weight_categories(id),
   FOREIGN KEY (age_cat_id)    REFERENCES age_categories(id),
-  FOREIGN KEY (lift_id)       REFERENCES lifts(id)
+  FOREIGN KEY (lift_id)       REFERENCES lifts(id),
+  FOREIGN KEY (athlete_cf)    REFERENCES athletes(cf) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_records_categories ON records(weight_cat_id, age_cat_id);

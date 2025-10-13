@@ -47,7 +47,62 @@ const remotePool = new Pool({
 async function syncFromRemote() {
   const remoteClient = await remotePool.connect();
   try {
-    // 1. Sync federations
+    // 1. Sync lifts
+    console.log('📥 Syncing lifts from remote...');
+    const lifts = await remoteClient.query('SELECT * FROM lifts');
+    await new Promise((resolve, reject) => {
+      db.run('DELETE FROM lifts', err => {
+        if (err) reject(err);
+        const stmt = db.prepare('INSERT INTO lifts (id, name) VALUES (?, ?)');
+        for (const lift of lifts.rows) {
+          stmt.run(lift.id, lift.name);
+        }
+        stmt.finalize(resolve);
+      });
+    });
+
+    // 2. Sync meet types
+    console.log('📥 Syncing meet types from remote...');
+    const meetTypes = await remoteClient.query('SELECT * FROM meet_types');
+    await new Promise((resolve, reject) => {
+      db.run('DELETE FROM meet_types', err => {
+        if (err) reject(err);
+        const stmt = db.prepare('INSERT INTO meet_types (id, name) VALUES (?, ?)');
+        for (const type of meetTypes.rows) {
+          stmt.run(type.id, type.name);
+        }
+        stmt.finalize(resolve);
+      });
+    });
+
+    // 3. Sync meet type lifts
+    console.log('📥 Syncing meet type lifts from remote...');
+    const meetTypeLifts = await remoteClient.query('SELECT * FROM meet_type_lifts ORDER BY sequence');
+    await new Promise((resolve, reject) => {
+      db.run('DELETE FROM meet_type_lifts', err => {
+        if (err) reject(err);
+        const stmt = db.prepare('INSERT INTO meet_type_lifts (meet_type_id, lift_id, sequence) VALUES (?, ?, ?)');
+        for (const mtl of meetTypeLifts.rows) {
+          stmt.run(mtl.meet_type_id, mtl.lift_id, mtl.sequence);
+        }
+        stmt.finalize(resolve);
+      });
+    });
+
+    // 4. Sync athletes history
+    console.log('📥 Syncing athletes from remote...');
+    const athletes = await remoteClient.query('SELECT * FROM athletes_history');
+    await new Promise((resolve, reject) => {
+      const stmt = db.prepare(`
+        INSERT OR IGNORE INTO athletes (cf, first_name, last_name, sex, birth_date)
+        VALUES (?, ?, ?, ?, ?)`);
+      for (const athlete of athletes.rows) {
+        stmt.run(athlete.cf, athlete.first_name, athlete.last_name, athlete.sex, athlete.birth_date);
+      }
+      stmt.finalize(resolve);
+    });
+
+    // 5. Sync federations
     console.log('📥 Syncing federations from remote...');
     const federations = await remoteClient.query('SELECT * FROM federations');
     await new Promise((resolve, reject) => {
@@ -89,17 +144,27 @@ async function syncFromRemote() {
       });
     });
 
-    // 4. Sync records
+    // 8. Sync records
     console.log('📥 Syncing records from remote...');
     const records = await remoteClient.query('SELECT * FROM public_records');
     await new Promise((resolve, reject) => {
       db.run('DELETE FROM records', err => {
         if (err) reject(err);
         const stmt = db.prepare(`
-          INSERT INTO records (weight_cat_id, age_cat_id, lift, record_kg, athlete_id, set_date)
-          VALUES (?, ?, ?, ?, NULL, ?)`);
+          INSERT INTO records (
+            weight_cat_id, age_cat_id, lift_id, record_kg, 
+            bodyweight_kg, athlete_cf, set_date
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`);
         for (const rec of records.rows) {
-          stmt.run(rec.weight_cat_id, rec.age_cat_id, rec.lift, rec.record_kg, rec.set_date);
+          stmt.run(
+            rec.weight_cat_id, 
+            rec.age_cat_id, 
+            rec.lift,         // lift is now lift_id in the new schema
+            rec.record_kg,
+            rec.bodyweight_kg,
+            rec.athlete_cf,   // using athlete_cf directly now
+            rec.set_date
+          );
         }
         stmt.finalize(resolve);
       });
@@ -170,9 +235,9 @@ async function generateSampleData() {
 
       // 2. Sample Meet
       console.log('📝 Creating sample meet...');
-      db.run(`INSERT INTO meets (federation_id, meet_code, name, meet_type, start_date, level, regulation_code, lifts_json) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [1, 'SLI-2025-ITALIA-01', 'Campionato Italiano Streetlifting 2025', 'FULL', '2025-11-15', 'NAZIONALE', 'WL_COEFF_2025', '["MU","PU","DIP","SQ"]'],
+      db.run(`INSERT INTO meets (federation_id, meet_code, name, meet_type_id, start_date, level, regulation_code) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [1, 'SLI-2025-ITALIA-01', 'Campionato Italiano Streetlifting 2025', 'STREET_4', '2025-11-15', 'NAZIONALE', 'WL_COEFF_2025'],
         function(err) {
           if (err) return reject(err);
           const meetId = this.lastID;
@@ -239,7 +304,7 @@ async function generateSampleData() {
 
             // 8. Attempts
             console.log('📝 Creating attempts (openers)...');
-            const attemptsStmt = db.prepare('INSERT INTO attempts (reg_id, lift, attempt_no, weight_kg, status) VALUES (?, ?, ?, ?, ?)');
+            const attemptsStmt = db.prepare('INSERT INTO attempts (reg_id, lift_id, attempt_no, weight_kg, status) VALUES (?, ?, ?, ?, ?)');
             
             for (let regId = 1; regId <= 30; regId++) {
               const isFemale = regId > 20;
@@ -260,7 +325,7 @@ async function generateSampleData() {
 
             // 9. Current State
             console.log('📝 Creating initial meet state...');
-            db.run(`INSERT INTO current_state (id, meet_id, current_flight_id, current_group_id, current_lift, 
+            db.run(`INSERT INTO current_state (id, meet_id, current_flight_id, current_group_id, current_lift_id, 
                     current_round, current_reg_id, timer_start, timer_seconds) 
                     VALUES (1, ?, 1, 1, 'MU', 1, 1, NULL, 60)`, [meetId], (err) => {
               if (err) return reject(err);
