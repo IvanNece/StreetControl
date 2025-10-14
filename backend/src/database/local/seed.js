@@ -45,8 +45,10 @@ const remotePool = new Pool({
  * Sync standard data from remote DB
  */
 async function syncFromRemote() {
-  const remoteClient = await remotePool.connect();
+  let remoteClient;
   try {
+    remoteClient = await remotePool.connect();
+    
     // 1. Sync lifts
     console.log('📥 Syncing lifts from remote...');
     const lifts = await remoteClient.query('SELECT * FROM lifts');
@@ -171,8 +173,9 @@ async function syncFromRemote() {
     });
 
   } finally {
-    remoteClient.release();
-    await remotePool.end();
+    if (remoteClient) {
+      remoteClient.release();
+    }
   }
 }
 
@@ -364,7 +367,19 @@ async function seed() {
     console.error('❌ Error seeding database:', err);
     process.exit(1);
   } finally {
-    db.close();
+    try {
+      // Close remote pool first
+      if (remotePool) {
+        await remotePool.end();
+      }
+      // Then close local db
+      if (db) {
+        db.close();
+      }
+    } catch (err) {
+      console.error('Error closing connections:', err);
+      process.exit(1);
+    }
   }
 }
 
