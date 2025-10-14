@@ -41,6 +41,14 @@ const remotePool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+// Handle pool errors gracefully
+remotePool.on('error', (err) => {
+  // Ignore shutdown/termination errors from Supabase
+  if (err.code !== 'XX000' && !err.message?.includes('shutdown')) {
+    console.error('⚠️  Remote pool error:', err.message);
+  }
+});
+
 /**
  * Sync standard data from remote DB
  */
@@ -230,7 +238,7 @@ async function generateSampleData() {
         ["MRNGIA91L48H501X", "Giorgia", "Morandi", "F", "1991-07-08"]
       ];
       
-      const athletesStmt = db.prepare('INSERT INTO athletes (cf, first_name, last_name, sex, birth_date) VALUES (?, ?, ?, ?, ?)');
+      const athletesStmt = db.prepare('INSERT OR IGNORE INTO athletes (cf, first_name, last_name, sex, birth_date) VALUES (?, ?, ?, ?, ?)');
       for (const athlete of athletes) {
         athletesStmt.run(athlete);
       }
@@ -363,23 +371,46 @@ async function seed() {
     // Then generate sample data
     await generateSampleData();
     
+    console.log('✅ Database seed completed successfully!\n');
+    
   } catch (err) {
     console.error('❌ Error seeding database:', err);
     process.exit(1);
   } finally {
+    // Close connections gracefully
     try {
       // Close remote pool first
       if (remotePool) {
         await remotePool.end();
-      }
-      // Then close local db
-      if (db) {
-        db.close();
+        console.log('✅ Remote database connection closed');
       }
     } catch (err) {
-      console.error('Error closing connections:', err);
-      process.exit(1);
+      // Ignore shutdown errors from remote (already closed by server)
+      if (err.code !== 'XX000' && !err.message?.includes('shutdown')) {
+        console.warn('⚠️  Warning closing remote connection:', err.message);
+      }
     }
+    
+    try {
+      // Then close local db
+      if (db) {
+        db.close((err) => {
+          if (err) {
+            console.warn('⚠️  Warning closing local database:', err.message);
+          } else {
+            console.log('✅ Local database connection closed');
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('⚠️  Warning closing local database:', err.message);
+    }
+    
+    // Give time for connections to close gracefully
+    setTimeout(() => {
+      console.log('\n🎉 All done! Ready to start server.\n');
+      process.exit(0);
+    }, 500);
   }
 }
 
