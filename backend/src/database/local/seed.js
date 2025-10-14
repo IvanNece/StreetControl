@@ -107,7 +107,11 @@ async function syncFromRemote() {
         INSERT OR IGNORE INTO athletes (cf, first_name, last_name, sex, birth_date)
         VALUES (?, ?, ?, ?, ?)`);
       for (const athlete of athletes.rows) {
-        stmt.run(athlete.cf, athlete.first_name, athlete.last_name, athlete.sex, athlete.birth_date);
+        // Convert Date object to ISO string (YYYY-MM-DD)
+        const birthDate = athlete.birth_date instanceof Date 
+          ? athlete.birth_date.toISOString().split('T')[0]
+          : athlete.birth_date;
+        stmt.run(athlete.cf, athlete.first_name, athlete.last_name, athlete.sex, birthDate);
       }
       stmt.finalize(resolve);
     });
@@ -120,7 +124,11 @@ async function syncFromRemote() {
         if (err) reject(err);
         const stmt = db.prepare('INSERT INTO federations (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)');
         for (const fed of federations.rows) {
-          stmt.run(fed.id, fed.username, fed.password_hash, fed.created_at);
+          // Convert timestamp to ISO string
+          const createdAt = fed.created_at instanceof Date
+            ? fed.created_at.toISOString()
+            : fed.created_at;
+          stmt.run(fed.id, fed.username, fed.password_hash, createdAt);
         }
         stmt.finalize(resolve);
       });
@@ -166,6 +174,10 @@ async function syncFromRemote() {
             bodyweight_kg, athlete_cf, set_date
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`);
         for (const rec of records.rows) {
+          // Convert set_date to ISO string (YYYY-MM-DD) if it's a Date object
+          const setDate = rec.set_date instanceof Date
+            ? rec.set_date.toISOString().split('T')[0]
+            : rec.set_date;
           stmt.run(
             rec.weight_cat_id, 
             rec.age_cat_id, 
@@ -173,7 +185,7 @@ async function syncFromRemote() {
             rec.record_kg,
             rec.bodyweight_kg,
             rec.athlete_cf,   // using athlete_cf directly now
-            rec.set_date
+            setDate
           );
         }
         stmt.finalize(resolve);
