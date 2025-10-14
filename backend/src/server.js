@@ -20,6 +20,10 @@ import { notFoundHandler, errorHandler } from './middleware/error.middleware.js'
 // Import routes
 import routes from './routes/index.js';
 
+// Import services
+import socketService from './services/socketService.js';
+import syncService from './services/syncService.js';
+
 // Load environment variables
 dotenv.config();
 
@@ -96,93 +100,23 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // ============================================
-// SOCKET.IO EVENTS
+// SOCKET.IO EVENTS (Managed by socketService)
 // ============================================
 
-// Track connected clients
-const connectedClients = {
-  judges: new Map(),    // judge_id -> socket
-  regista: null,        // regista socket
-  viewers: new Set()    // viewer sockets
-};
+// Initialize socket service
+socketService.initialize(io);
+console.log('✅ Socket.IO service initialized');
 
-io.on('connection', (socket) => {
-  console.log(`🔌 Client connected: ${socket.id}`);
+// Initialize sync service (if credentials available)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-  // Judge connection
-  socket.on('judge:connect', (data) => {
-    const { judgeId, meetId, role } = data;
-    connectedClients.judges.set(judgeId, socket);
-    socket.join(`meet_${meetId}`);
-    socket.join('judges');
-    
-    console.log(`⚖️  Judge connected: ${role} (ID: ${judgeId})`);
-    
-    // Notify regista
-    io.to('regista').emit('judge:connected', {
-      judgeId,
-      role,
-      socketId: socket.id
-    });
-  });
-
-  // Regista connection
-  socket.on('regista:connect', (data) => {
-    const { meetId } = data;
-    connectedClients.regista = socket;
-    socket.join(`meet_${meetId}`);
-    socket.join('regista');
-    
-    console.log(`🎬 Regista connected for meet ${meetId}`);
-  });
-
-  // Viewer connection (for overlays, rankings, spotter screens)
-  socket.on('viewer:connect', (data) => {
-    const { meetId, viewType } = data;
-    connectedClients.viewers.add(socket);
-    socket.join(`meet_${meetId}`);
-    socket.join('viewers');
-    
-    console.log(`👁️  Viewer connected: ${viewType} for meet ${meetId}`);
-  });
-
-  // Judge vote submission
-  socket.on('judge:vote', (data) => {
-    console.log(`⚖️  Vote received:`, data);
-    
-    // Broadcast to regista and other connected clients
-    io.to(`meet_${data.meetId}`).emit('vote:received', data);
-  });
-
-  // Regista advances to next athlete
-  socket.on('regista:next', (data) => {
-    console.log(`🎬 Regista advances to next athlete:`, data);
-    
-    // Broadcast to all clients
-    io.to(`meet_${data.meetId}`).emit('state:updated', data);
-  });
-
-  // Client disconnection
-  socket.on('disconnect', () => {
-    console.log(`🔌 Client disconnected: ${socket.id}`);
-    
-    // Remove from tracking
-    for (const [judgeId, judgeSocket] of connectedClients.judges.entries()) {
-      if (judgeSocket === socket) {
-        connectedClients.judges.delete(judgeId);
-        io.to('regista').emit('judge:disconnected', { judgeId });
-        break;
-      }
-    }
-    
-    if (connectedClients.regista === socket) {
-      connectedClients.regista = null;
-      console.log(`🎬 Regista disconnected`);
-    }
-    
-    connectedClients.viewers.delete(socket);
-  });
-});
+if (SUPABASE_URL && SUPABASE_KEY) {
+  syncService.initialize(SUPABASE_URL, SUPABASE_KEY);
+  console.log('✅ Sync service initialized with Supabase');
+} else {
+  console.log('⚠️  Sync service disabled (no Supabase credentials)');
+}
 
 // ============================================
 // DATABASE CONNECTION & SERVER START

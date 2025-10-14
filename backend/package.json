@@ -9,7 +9,8 @@
     "dev": "nodemon src/server.js",
     "init-db": "node src/database/init-local.js",
     "seed": "node src/database/local/seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha test/**/*.js --timeout 5000",
+    "test:services": "mocha test/test-2.3-services.js --timeout 5000"
   },
   "keywords": [
     "streetlifting",
@@ -21,6 +22,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@supabase/supabase-js": "^2.75.0",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -33,6 +35,8 @@
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
+    "chai": "^4.5.0",
+    "mocha": "^10.8.2",
     "node-fetch": "^2.7.0",
     "nodemon": "^3.0.1",
     "socket.io-client": "^4.8.1"
