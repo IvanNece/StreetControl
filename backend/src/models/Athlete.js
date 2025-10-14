@@ -16,21 +16,16 @@ class Athlete {
   static async create(data) {
     const sql = `
       INSERT INTO athletes (
-        name, surname, birth_date, sex, nation, 
-        membership_code, email, phone, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cf, first_name, last_name, sex, birth_date
+      ) VALUES (?, ?, ?, ?, ?)
     `;
     
     const result = await run(sql, [
-      data.name,
-      data.surname,
-      data.birth_date,
+      data.cf,
+      data.first_name,
+      data.last_name,
       data.sex,
-      data.nation || null,
-      data.membership_code || null,
-      data.email || null,
-      data.phone || null,
-      data.notes || null
+      data.birth_date
     ]);
     
     return result.lastID;
@@ -51,35 +46,35 @@ class Athlete {
    * @returns {Promise<Array>}
    */
   static async findAll() {
-    const sql = 'SELECT * FROM athletes ORDER BY surname, name';
+    const sql = 'SELECT * FROM athletes ORDER BY last_name, first_name';
     return await all(sql);
   }
 
   /**
-   * Search athletes by name/surname
+   * Search athletes by name/surname/cf
    * @param {string} query - Search query
    * @returns {Promise<Array>}
    */
   static async search(query) {
     const sql = `
       SELECT * FROM athletes 
-      WHERE LOWER(name) LIKE LOWER(?) 
-         OR LOWER(surname) LIKE LOWER(?)
-         OR LOWER(membership_code) LIKE LOWER(?)
-      ORDER BY surname, name
+      WHERE LOWER(first_name) LIKE LOWER(?) 
+         OR LOWER(last_name) LIKE LOWER(?)
+         OR LOWER(cf) LIKE LOWER(?)
+      ORDER BY last_name, first_name
     `;
     const searchPattern = `%${query}%`;
     return await all(sql, [searchPattern, searchPattern, searchPattern]);
   }
 
   /**
-   * Find athlete by membership code
-   * @param {string} code - Membership code
+   * Find athlete by Codice Fiscale
+   * @param {string} cf - Codice Fiscale
    * @returns {Promise<Object|null>}
    */
-  static async findByMembershipCode(code) {
-    const sql = 'SELECT * FROM athletes WHERE membership_code = ?';
-    return await get(sql, [code]);
+  static async findByCF(cf) {
+    const sql = 'SELECT * FROM athletes WHERE cf = ?';
+    return await get(sql, [cf]);
   }
 
   /**
@@ -88,18 +83,8 @@ class Athlete {
    * @returns {Promise<Array>}
    */
   static async findBySex(sex) {
-    const sql = 'SELECT * FROM athletes WHERE sex = ? ORDER BY surname, name';
+    const sql = 'SELECT * FROM athletes WHERE sex = ? ORDER BY last_name, first_name';
     return await all(sql, [sex]);
-  }
-
-  /**
-   * Find athletes by nation
-   * @param {string} nation - Nation code (e.g., 'ITA')
-   * @returns {Promise<Array>}
-   */
-  static async findByNation(nation) {
-    const sql = 'SELECT * FROM athletes WHERE nation = ? ORDER BY surname, name';
-    return await all(sql, [nation]);
   }
 
   /**
@@ -111,28 +96,20 @@ class Athlete {
   static async update(id, data) {
     const sql = `
       UPDATE athletes SET
-        name = ?,
-        surname = ?,
-        birth_date = ?,
+        cf = ?,
+        first_name = ?,
+        last_name = ?,
         sex = ?,
-        nation = ?,
-        membership_code = ?,
-        email = ?,
-        phone = ?,
-        notes = ?
+        birth_date = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
-      data.name,
-      data.surname,
-      data.birth_date,
+      data.cf,
+      data.first_name,
+      data.last_name,
       data.sex,
-      data.nation || null,
-      data.membership_code || null,
-      data.email || null,
-      data.phone || null,
-      data.notes || null,
+      data.birth_date,
       id
     ]);
     
@@ -146,8 +123,7 @@ class Athlete {
    * @returns {Promise<number>} Number of rows affected
    */
   static async partialUpdate(id, updates) {
-    const allowedFields = ['name', 'surname', 'birth_date', 'sex', 'nation', 
-                           'membership_code', 'email', 'phone', 'notes'];
+    const allowedFields = ['cf', 'first_name', 'last_name', 'sex', 'birth_date'];
     
     const fields = [];
     const values = [];
@@ -213,16 +189,17 @@ class Athlete {
         a.*,
         r.id as registration_id,
         r.bodyweight_kg,
-        r.team,
-        r.lot_number,
+        r.rack_height,
+        r.belt_height,
+        r.out_of_weight,
         wc.name as weight_category_name,
         ac.name as age_category_name
       FROM athletes a
       INNER JOIN registrations r ON a.id = r.athlete_id
-      LEFT JOIN weight_categories wc ON r.weight_category_id = wc.id
-      LEFT JOIN age_categories ac ON r.age_category_id = ac.id
+      LEFT JOIN weight_categories wc ON r.weight_cat_id = wc.id
+      LEFT JOIN age_categories ac ON r.age_cat_id = ac.id
       WHERE r.meet_id = ?
-      ORDER BY a.surname, a.name
+      ORDER BY a.last_name, a.first_name
     `;
     return await all(sql, [meetId]);
   }

@@ -9,26 +9,20 @@ import { get, all, run } from '../config/database-local.js';
 
 class Judge {
   /**
-   * Create new judge
+   * Create new judge for a meet
    * @param {Object} data - Judge data
    * @returns {Promise<number>} Created judge ID
    */
   static async create(data) {
     const sql = `
       INSERT INTO judges (
-        name, surname, role, federation_id, 
-        membership_code, email, phone
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        meet_id, role
+      ) VALUES (?, ?)
     `;
     
     const result = await run(sql, [
-      data.name,
-      data.surname,
-      data.role || 'JUDGE',
-      data.federation_id || null,
-      data.membership_code || null,
-      data.email || null,
-      data.phone || null
+      data.meet_id,
+      data.role
     ]);
     
     return result.lastID;
@@ -43,121 +37,67 @@ class Judge {
     const sql = `
       SELECT 
         j.*,
-        f.name as federation_name,
-        f.abbrev as federation_abbrev
+        m.name as meet_name
       FROM judges j
-      LEFT JOIN federations f ON j.federation_id = f.id
+      INNER JOIN meets m ON j.meet_id = m.id
       WHERE j.id = ?
     `;
     return await get(sql, [id]);
   }
 
   /**
-   * Get all judges
-   * @param {string} role - Optional: filter by role
+   * Get all judges for a meet
+   * @param {number} meetId - Meet ID
+   * @param {string} role - Optional: filter by role ('HEAD', 'LEFT', 'RIGHT')
    * @returns {Promise<Array>}
    */
-  static async findAll(role = null) {
+  static async findByMeet(meetId, role = null) {
     let sql = `
-      SELECT 
-        j.*,
-        f.name as federation_name,
-        f.abbrev as federation_abbrev
+      SELECT j.*
       FROM judges j
-      LEFT JOIN federations f ON j.federation_id = f.id
+      WHERE j.meet_id = ?
     `;
     
-    const params = [];
+    const params = [meetId];
     if (role) {
-      sql += ' WHERE j.role = ?';
+      sql += ' AND j.role = ?';
       params.push(role);
     }
     
-    sql += ' ORDER BY j.surname, j.name';
+    sql += ' ORDER BY j.role';
     return await all(sql, params);
   }
 
   /**
-   * Find judge by membership code
-   * @param {string} code - Membership code
+   * Find judge by role in a meet
+   * @param {number} meetId - Meet ID
+   * @param {string} role - Judge role ('HEAD', 'LEFT', 'RIGHT')
    * @returns {Promise<Object|null>}
    */
-  static async findByMembershipCode(code) {
-    const sql = `
-      SELECT 
-        j.*,
-        f.name as federation_name,
-        f.abbrev as federation_abbrev
-      FROM judges j
-      LEFT JOIN federations f ON j.federation_id = f.id
-      WHERE j.membership_code = ?
-    `;
-    return await get(sql, [code]);
-  }
-
-  /**
-   * Search judges by name/surname
-   * @param {string} query - Search query
-   * @returns {Promise<Array>}
-   */
-  static async search(query) {
-    const sql = `
-      SELECT 
-        j.*,
-        f.name as federation_name
-      FROM judges j
-      LEFT JOIN federations f ON j.federation_id = f.id
-      WHERE LOWER(j.name) LIKE LOWER(?) 
-         OR LOWER(j.surname) LIKE LOWER(?)
-         OR LOWER(j.membership_code) LIKE LOWER(?)
-      ORDER BY j.surname, j.name
-    `;
-    const searchPattern = `%${query}%`;
-    return await all(sql, [searchPattern, searchPattern, searchPattern]);
-  }
-
-  /**
-   * Find judges by federation
-   * @param {number} federationId - Federation ID
-   * @returns {Promise<Array>}
-   */
-  static async findByFederation(federationId) {
+  static async findByMeetAndRole(meetId, role) {
     const sql = `
       SELECT j.*
       FROM judges j
-      WHERE j.federation_id = ?
-      ORDER BY j.surname, j.name
+      WHERE j.meet_id = ? AND j.role = ?
     `;
-    return await all(sql, [federationId]);
+    return await get(sql, [meetId, role]);
   }
 
   /**
-   * Update judge
+   * Update judge role
    * @param {number} id - Judge ID
-   * @param {Object} data - Updated data
+   * @param {string} role - New role
    * @returns {Promise<number>} Number of rows affected
    */
-  static async update(id, data) {
+  static async updateRole(id, role) {
     const sql = `
       UPDATE judges SET
-        name = ?,
-        surname = ?,
-        role = ?,
-        federation_id = ?,
-        membership_code = ?,
-        email = ?,
-        phone = ?
+        role = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
-      data.name,
-      data.surname,
-      data.role,
-      data.federation_id || null,
-      data.membership_code || null,
-      data.email || null,
-      data.phone || null,
+      role,
       id
     ]);
     
@@ -176,44 +116,37 @@ class Judge {
   }
 
   /**
-   * Verify judge credentials (for authentication)
-   * @param {string} membershipCode - Membership code
-   * @returns {Promise<Object|null>} Judge if valid, null otherwise
-   */
-  static async verifyCredentials(membershipCode) {
-    return await this.findByMembershipCode(membershipCode);
-  }
-
-  /**
-   * Check if judge exists
-   * @param {number} id - Judge ID
+   * Check if all 3 judges are assigned to a meet
+   * @param {number} meetId - Meet ID
    * @returns {Promise<boolean>}
    */
-  static async exists(id) {
-    const sql = 'SELECT COUNT(*) as count FROM judges WHERE id = ?';
-    const result = await get(sql, [id]);
-    return result.count > 0;
+  static async areAllJudgesAssigned(meetId) {
+    const sql = 'SELECT COUNT(*) as count FROM judges WHERE meet_id = ?';
+    const result = await get(sql, [meetId]);
+    return result.count === 3;
   }
 
   /**
-   * Count judges by role
+   * Count judges for a meet
+   * @param {number} meetId - Meet ID
+   * @returns {Promise<number>}
+   */
+  static async countByMeet(meetId) {
+    const sql = 'SELECT COUNT(*) as count FROM judges WHERE meet_id = ?';
+    const result = await get(sql, [meetId]);
+    return result.count;
+  }
+
+  /**
+   * Check if judge role exists in meet
+   * @param {number} meetId - Meet ID
    * @param {string} role - Judge role
-   * @returns {Promise<number>}
+   * @returns {Promise<boolean>}
    */
-  static async countByRole(role) {
-    const sql = 'SELECT COUNT(*) as count FROM judges WHERE role = ?';
-    const result = await get(sql, [role]);
-    return result.count;
-  }
-
-  /**
-   * Get total judge count
-   * @returns {Promise<number>}
-   */
-  static async count() {
-    const sql = 'SELECT COUNT(*) as count FROM judges';
-    const result = await get(sql);
-    return result.count;
+  static async roleExistsInMeet(meetId, role) {
+    const sql = 'SELECT COUNT(*) as count FROM judges WHERE meet_id = ? AND role = ?';
+    const result = await get(sql, [meetId, role]);
+    return result.count > 0;
   }
 }
 

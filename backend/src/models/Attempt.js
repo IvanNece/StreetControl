@@ -16,18 +16,17 @@ class Attempt {
   static async create(data) {
     const sql = `
       INSERT INTO attempts (
-        registration_id, lift_id, attempt_number, 
-        weight_kg, status, timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        reg_id, lift_id, attempt_no, 
+        weight_kg, status
+      ) VALUES (?, ?, ?, ?, ?)
     `;
     
     const result = await run(sql, [
-      data.registration_id,
+      data.reg_id,
       data.lift_id,
-      data.attempt_number,
-      data.weight_kg || null,
-      data.status || 'PENDING',
-      data.timestamp || new Date().toISOString()
+      data.attempt_no,
+      data.weight_kg,
+      data.status || 'PENDING'
     ]);
     
     return result.lastID;
@@ -43,13 +42,11 @@ class Attempt {
       SELECT 
         a.*,
         r.athlete_id,
-        r.lot_number,
-        at.name as athlete_name,
-        at.surname as athlete_surname,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev
+        at.first_name as athlete_first_name,
+        at.last_name as athlete_last_name,
+        l.name as lift_name
       FROM attempts a
-      INNER JOIN registrations r ON a.registration_id = r.id
+      INNER JOIN registrations r ON a.reg_id = r.id
       INNER JOIN athletes at ON r.athlete_id = at.id
       INNER JOIN lifts l ON a.lift_id = l.id
       WHERE a.id = ?
@@ -59,28 +56,27 @@ class Attempt {
 
   /**
    * Get all attempts for a registration
-   * @param {number} registrationId - Registration ID
-   * @param {number} liftId - Optional: filter by lift
+   * @param {number} regId - Registration ID
+   * @param {string} liftId - Optional: filter by lift
    * @returns {Promise<Array>}
    */
-  static async findByRegistration(registrationId, liftId = null) {
+  static async findByRegistration(regId, liftId = null) {
     let sql = `
       SELECT 
         a.*,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev
+        l.name as lift_name
       FROM attempts a
       INNER JOIN lifts l ON a.lift_id = l.id
-      WHERE a.registration_id = ?
+      WHERE a.reg_id = ?
     `;
     
-    const params = [registrationId];
+    const params = [regId];
     if (liftId) {
       sql += ' AND a.lift_id = ?';
       params.push(liftId);
     }
     
-    sql += ' ORDER BY a.lift_id, a.attempt_number';
+    sql += ' ORDER BY a.lift_id, a.attempt_no';
     return await all(sql, params);
   }
 
@@ -94,41 +90,38 @@ class Attempt {
       SELECT 
         a.*,
         r.athlete_id,
-        r.lot_number,
-        at.name as athlete_name,
-        at.surname as athlete_surname,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev
+        at.first_name as athlete_first_name,
+        at.last_name as athlete_last_name,
+        l.name as lift_name
       FROM attempts a
-      INNER JOIN registrations r ON a.registration_id = r.id
+      INNER JOIN registrations r ON a.reg_id = r.id
       INNER JOIN athletes at ON r.athlete_id = at.id
       INNER JOIN lifts l ON a.lift_id = l.id
       WHERE r.meet_id = ?
-      ORDER BY a.timestamp
+      ORDER BY a.lift_id, a.attempt_no
     `;
     return await all(sql, [meetId]);
   }
 
   /**
    * Find specific attempt
-   * @param {number} registrationId - Registration ID
-   * @param {number} liftId - Lift ID
-   * @param {number} attemptNumber - Attempt number (1, 2, 3)
+   * @param {number} regId - Registration ID
+   * @param {string} liftId - Lift ID
+   * @param {number} attemptNo - Attempt number (1, 2, 3, 4)
    * @returns {Promise<Object|null>}
    */
-  static async findSpecificAttempt(registrationId, liftId, attemptNumber) {
+  static async findSpecificAttempt(regId, liftId, attemptNo) {
     const sql = `
       SELECT 
         a.*,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev
+        l.name as lift_name
       FROM attempts a
       INNER JOIN lifts l ON a.lift_id = l.id
-      WHERE a.registration_id = ? 
+      WHERE a.reg_id = ? 
         AND a.lift_id = ? 
-        AND a.attempt_number = ?
+        AND a.attempt_no = ?
     `;
-    return await get(sql, [registrationId, liftId, attemptNumber]);
+    return await get(sql, [regId, liftId, attemptNo]);
   }
 
   /**
@@ -165,15 +158,13 @@ class Attempt {
     const sql = `
       UPDATE attempts SET
         weight_kg = ?,
-        status = ?,
-        timestamp = ?
+        status = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
       data.weight_kg,
       data.status,
-      data.timestamp || new Date().toISOString(),
       id
     ]);
     
@@ -193,49 +184,48 @@ class Attempt {
 
   /**
    * Get best valid attempt for a registration and lift
-   * @param {number} registrationId - Registration ID
-   * @param {number} liftId - Lift ID
+   * @param {number} regId - Registration ID
+   * @param {string} liftId - Lift ID
    * @returns {Promise<Object|null>}
    */
-  static async getBestAttempt(registrationId, liftId) {
+  static async getBestAttempt(regId, liftId) {
     const sql = `
       SELECT 
         a.*,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev
+        l.name as lift_name
       FROM attempts a
       INNER JOIN lifts l ON a.lift_id = l.id
-      WHERE a.registration_id = ? 
+      WHERE a.reg_id = ? 
         AND a.lift_id = ?
         AND a.status = 'VALID'
       ORDER BY a.weight_kg DESC
       LIMIT 1
     `;
-    return await get(sql, [registrationId, liftId]);
+    return await get(sql, [regId, liftId]);
   }
 
   /**
    * Count attempts by status
-   * @param {number} registrationId - Registration ID
+   * @param {number} regId - Registration ID
    * @param {string} status - Status to count
    * @returns {Promise<number>}
    */
-  static async countByStatus(registrationId, status) {
+  static async countByStatus(regId, status) {
     const sql = `
       SELECT COUNT(*) as count 
       FROM attempts 
-      WHERE registration_id = ? AND status = ?
+      WHERE reg_id = ? AND status = ?
     `;
-    const result = await get(sql, [registrationId, status]);
+    const result = await get(sql, [regId, status]);
     return result.count;
   }
 
   /**
    * Get attempt statistics for a registration
-   * @param {number} registrationId - Registration ID
+   * @param {number} regId - Registration ID
    * @returns {Promise<Object>}
    */
-  static async getStatistics(registrationId) {
+  static async getStatistics(regId) {
     const sql = `
       SELECT 
         COUNT(*) as total_attempts,
@@ -244,9 +234,9 @@ class Attempt {
         SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending_attempts,
         MAX(CASE WHEN status = 'VALID' THEN weight_kg ELSE 0 END) as best_weight
       FROM attempts
-      WHERE registration_id = ?
+      WHERE reg_id = ?
     `;
-    const result = await get(sql, [registrationId]);
+    const result = await get(sql, [regId]);
     return result || {
       total_attempts: 0,
       valid_attempts: 0,
@@ -258,27 +248,27 @@ class Attempt {
 
   /**
    * Check if attempt exists
-   * @param {number} registrationId - Registration ID
-   * @param {number} liftId - Lift ID
-   * @param {number} attemptNumber - Attempt number
+   * @param {number} regId - Registration ID
+   * @param {string} liftId - Lift ID
+   * @param {number} attemptNo - Attempt number
    * @returns {Promise<boolean>}
    */
-  static async exists(registrationId, liftId, attemptNumber) {
+  static async exists(regId, liftId, attemptNo) {
     const sql = `
       SELECT COUNT(*) as count 
       FROM attempts 
-      WHERE registration_id = ? AND lift_id = ? AND attempt_number = ?
+      WHERE reg_id = ? AND lift_id = ? AND attempt_no = ?
     `;
-    const result = await get(sql, [registrationId, liftId, attemptNumber]);
+    const result = await get(sql, [regId, liftId, attemptNo]);
     return result.count > 0;
   }
 
   /**
    * Get total for an athlete (sum of best valid attempts per lift)
-   * @param {number} registrationId - Registration ID
+   * @param {number} regId - Registration ID
    * @returns {Promise<number>} Total in kg
    */
-  static async getTotal(registrationId) {
+  static async getTotal(regId) {
     const sql = `
       SELECT 
         COALESCE(SUM(best_weight), 0) as total
@@ -287,11 +277,11 @@ class Attempt {
           lift_id,
           MAX(weight_kg) as best_weight
         FROM attempts
-        WHERE registration_id = ? AND status = 'VALID'
+        WHERE reg_id = ? AND status = 'VALID'
         GROUP BY lift_id
       )
     `;
-    const result = await get(sql, [registrationId]);
+    const result = await get(sql, [regId]);
     return result ? result.total : 0;
   }
 }

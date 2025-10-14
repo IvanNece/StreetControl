@@ -25,16 +25,14 @@ class CurrentState {
       SELECT 
         cs.*,
         r.athlete_id,
-        r.lot_number,
-        a.name as athlete_name,
-        a.surname as athlete_surname,
+        a.first_name as athlete_first_name,
+        a.last_name as athlete_last_name,
         a.sex as athlete_sex,
         l.name as lift_name,
-        l.abbrev as lift_abbrev,
         f.name as flight_name,
         g.name as group_name
       FROM current_state cs
-      LEFT JOIN registrations r ON cs.current_registration_id = r.id
+      LEFT JOIN registrations r ON cs.current_reg_id = r.id
       LEFT JOIN athletes a ON r.athlete_id = a.id
       LEFT JOIN lifts l ON cs.current_lift_id = l.id
       LEFT JOIN flights f ON cs.current_flight_id = f.id
@@ -53,42 +51,42 @@ class CurrentState {
     const sql = `
       INSERT INTO current_state (
         id, 
+        meet_id,
         current_flight_id, 
         current_group_id,
-        current_registration_id, 
+        current_reg_id, 
         current_lift_id, 
-        current_attempt_number,
-        timer_state, 
-        timer_seconds_left,
-        phase
+        current_round,
+        timer_start, 
+        timer_seconds
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     await run(sql, [
       SINGLETON_ID,
+      data.meet_id || null,
       data.current_flight_id || null,
       data.current_group_id || null,
-      data.current_registration_id || null,
+      data.current_reg_id || null,
       data.current_lift_id || null,
-      data.current_attempt_number || 1,
-      data.timer_state || 'STOPPED',
-      data.timer_seconds_left || 60,
-      data.phase || 'IDLE'
+      data.current_round || 1,
+      data.timer_start || null,
+      data.timer_seconds || 60
     ]);
   }
 
   /**
    * Update current athlete
-   * @param {number} registrationId - Registration ID
+   * @param {number} regId - Registration ID
    * @returns {Promise<void>}
    */
-  static async setCurrentAthlete(registrationId) {
+  static async setCurrentAthlete(regId) {
     const sql = `
       UPDATE current_state 
-      SET current_registration_id = ? 
+      SET current_reg_id = ? 
       WHERE id = ?
     `;
-    await run(sql, [registrationId, SINGLETON_ID]);
+    await run(sql, [regId, SINGLETON_ID]);
   }
 
   /**
@@ -106,17 +104,17 @@ class CurrentState {
   }
 
   /**
-   * Update current attempt number
-   * @param {number} attemptNumber - Attempt number (1, 2, 3)
+   * Update current round
+   * @param {number} round - Round number (1, 2, 3)
    * @returns {Promise<void>}
    */
-  static async setAttemptNumber(attemptNumber) {
+  static async setCurrentRound(round) {
     const sql = `
       UPDATE current_state 
-      SET current_attempt_number = ? 
+      SET current_round = ? 
       WHERE id = ?
     `;
-    await run(sql, [attemptNumber, SINGLETON_ID]);
+    await run(sql, [round, SINGLETON_ID]);
   }
 
   /**
@@ -148,31 +146,31 @@ class CurrentState {
   }
 
   /**
-   * Update timer state
-   * @param {string} timerState - Timer state ('RUNNING', 'PAUSED', 'STOPPED')
+   * Update timer start timestamp
+   * @param {string} timestamp - ISO datetime or null
    * @returns {Promise<void>}
    */
-  static async setTimerState(timerState) {
+  static async setTimerStart(timestamp) {
     const sql = `
       UPDATE current_state 
-      SET timer_state = ? 
+      SET timer_start = ? 
       WHERE id = ?
     `;
-    await run(sql, [timerState, SINGLETON_ID]);
+    await run(sql, [timestamp, SINGLETON_ID]);
   }
 
   /**
-   * Update timer seconds left
-   * @param {number} secondsLeft - Seconds left on clock
+   * Update timer seconds
+   * @param {number} seconds - Seconds (default 60)
    * @returns {Promise<void>}
    */
-  static async setTimerSeconds(secondsLeft) {
+  static async setTimerSeconds(seconds) {
     const sql = `
       UPDATE current_state 
-      SET timer_seconds_left = ? 
+      SET timer_seconds = ? 
       WHERE id = ?
     `;
-    await run(sql, [secondsLeft, SINGLETON_ID]);
+    await run(sql, [seconds, SINGLETON_ID]);
   }
 
   /**
@@ -183,19 +181,11 @@ class CurrentState {
   static async startTimer(seconds = 60) {
     const sql = `
       UPDATE current_state 
-      SET timer_state = 'RUNNING', 
-          timer_seconds_left = ? 
+      SET timer_start = ?, 
+          timer_seconds = ? 
       WHERE id = ?
     `;
-    await run(sql, [seconds, SINGLETON_ID]);
-  }
-
-  /**
-   * Pause timer
-   * @returns {Promise<void>}
-   */
-  static async pauseTimer() {
-    await this.setTimerState('PAUSED');
+    await run(sql, [new Date().toISOString(), seconds, SINGLETON_ID]);
   }
 
   /**
@@ -205,25 +195,11 @@ class CurrentState {
   static async stopTimer() {
     const sql = `
       UPDATE current_state 
-      SET timer_state = 'STOPPED', 
-          timer_seconds_left = 60 
+      SET timer_start = NULL, 
+          timer_seconds = 60 
       WHERE id = ?
     `;
     await run(sql, [SINGLETON_ID]);
-  }
-
-  /**
-   * Update phase
-   * @param {string} phase - Competition phase
-   * @returns {Promise<void>}
-   */
-  static async setPhase(phase) {
-    const sql = `
-      UPDATE current_state 
-      SET phase = ? 
-      WHERE id = ?
-    `;
-    await run(sql, [phase, SINGLETON_ID]);
   }
 
   /**
@@ -235,6 +211,10 @@ class CurrentState {
     const fields = [];
     const values = [];
 
+    if (data.meet_id !== undefined) {
+      fields.push('meet_id = ?');
+      values.push(data.meet_id);
+    }
     if (data.current_flight_id !== undefined) {
       fields.push('current_flight_id = ?');
       values.push(data.current_flight_id);
@@ -243,29 +223,25 @@ class CurrentState {
       fields.push('current_group_id = ?');
       values.push(data.current_group_id);
     }
-    if (data.current_registration_id !== undefined) {
-      fields.push('current_registration_id = ?');
-      values.push(data.current_registration_id);
+    if (data.current_reg_id !== undefined) {
+      fields.push('current_reg_id = ?');
+      values.push(data.current_reg_id);
     }
     if (data.current_lift_id !== undefined) {
       fields.push('current_lift_id = ?');
       values.push(data.current_lift_id);
     }
-    if (data.current_attempt_number !== undefined) {
-      fields.push('current_attempt_number = ?');
-      values.push(data.current_attempt_number);
+    if (data.current_round !== undefined) {
+      fields.push('current_round = ?');
+      values.push(data.current_round);
     }
-    if (data.timer_state !== undefined) {
-      fields.push('timer_state = ?');
-      values.push(data.timer_state);
+    if (data.timer_start !== undefined) {
+      fields.push('timer_start = ?');
+      values.push(data.timer_start);
     }
-    if (data.timer_seconds_left !== undefined) {
-      fields.push('timer_seconds_left = ?');
-      values.push(data.timer_seconds_left);
-    }
-    if (data.phase !== undefined) {
-      fields.push('phase = ?');
-      values.push(data.phase);
+    if (data.timer_seconds !== undefined) {
+      fields.push('timer_seconds = ?');
+      values.push(data.timer_seconds);
     }
 
     if (fields.length === 0) {
@@ -284,14 +260,14 @@ class CurrentState {
   static async reset() {
     const sql = `
       UPDATE current_state 
-      SET current_flight_id = NULL,
+      SET meet_id = NULL,
+          current_flight_id = NULL,
           current_group_id = NULL,
-          current_registration_id = NULL,
+          current_reg_id = NULL,
           current_lift_id = NULL,
-          current_attempt_number = 1,
-          timer_state = 'STOPPED',
-          timer_seconds_left = 60,
-          phase = 'IDLE'
+          current_round = 1,
+          timer_start = NULL,
+          timer_seconds = 60
       WHERE id = ?
     `;
     await run(sql, [SINGLETON_ID]);

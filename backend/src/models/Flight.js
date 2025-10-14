@@ -20,16 +20,15 @@ class Flight {
   static async createFlight(data) {
     const sql = `
       INSERT INTO flights (
-        meet_id, name, platform_number, scheduled_time, status
-      ) VALUES (?, ?, ?, ?, ?)
+        meet_id, name, ord, start_time
+      ) VALUES (?, ?, ?, ?)
     `;
     
     const result = await run(sql, [
       data.meet_id,
       data.name,
-      data.platform_number || null,
-      data.scheduled_time || null,
-      data.status || 'PENDING'
+      data.ord,
+      data.start_time || null
     ]);
     
     return result.lastID;
@@ -45,7 +44,7 @@ class Flight {
       SELECT 
         f.*,
         m.name as meet_name,
-        m.code as meet_code
+        m.meet_code as meet_code
       FROM flights f
       INNER JOIN meets m ON f.meet_id = m.id
       WHERE f.id = ?
@@ -62,7 +61,7 @@ class Flight {
     const sql = `
       SELECT * FROM flights
       WHERE meet_id = ?
-      ORDER BY platform_number, scheduled_time, name
+      ORDER BY ord, start_time
     `;
     return await all(sql, [meetId]);
   }
@@ -77,32 +76,18 @@ class Flight {
     const sql = `
       UPDATE flights SET
         name = ?,
-        platform_number = ?,
-        scheduled_time = ?,
-        status = ?
+        ord = ?,
+        start_time = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
       data.name,
-      data.platform_number || null,
-      data.scheduled_time || null,
-      data.status,
+      data.ord,
+      data.start_time || null,
       id
     ]);
     
-    return result.changes;
-  }
-
-  /**
-   * Update flight status
-   * @param {number} id - Flight ID
-   * @param {string} status - New status
-   * @returns {Promise<number>} Number of rows affected
-   */
-  static async updateFlightStatus(id, status) {
-    const sql = 'UPDATE flights SET status = ? WHERE id = ?';
-    const result = await run(sql, [status, id]);
     return result.changes;
   }
 
@@ -129,16 +114,14 @@ class Flight {
   static async createGroup(data) {
     const sql = `
       INSERT INTO groups (
-        flight_id, name, lift_id, sex, weight_category_id
-      ) VALUES (?, ?, ?, ?, ?)
+        flight_id, name, ord
+      ) VALUES (?, ?, ?)
     `;
     
     const result = await run(sql, [
       data.flight_id,
       data.name,
-      data.lift_id,
-      data.sex || null,
-      data.weight_category_id || null
+      data.ord
     ]);
     
     return result.lastID;
@@ -153,14 +136,9 @@ class Flight {
     const sql = `
       SELECT 
         g.*,
-        f.name as flight_name,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev,
-        wc.name as weight_category_name
+        f.name as flight_name
       FROM groups g
       INNER JOIN flights f ON g.flight_id = f.id
-      INNER JOIN lifts l ON g.lift_id = l.id
-      LEFT JOIN weight_categories wc ON g.weight_category_id = wc.id
       WHERE g.id = ?
     `;
     return await get(sql, [id]);
@@ -175,17 +153,12 @@ class Flight {
     const sql = `
       SELECT 
         g.*,
-        l.name as lift_name,
-        l.abbrev as lift_abbrev,
-        wc.name as weight_category_name,
         COUNT(ge.id) as athlete_count
       FROM groups g
-      INNER JOIN lifts l ON g.lift_id = l.id
-      LEFT JOIN weight_categories wc ON g.weight_category_id = wc.id
       LEFT JOIN group_entries ge ON g.id = ge.group_id
       WHERE g.flight_id = ?
       GROUP BY g.id
-      ORDER BY g.name
+      ORDER BY g.ord
     `;
     return await all(sql, [flightId]);
   }
@@ -200,17 +173,13 @@ class Flight {
     const sql = `
       UPDATE groups SET
         name = ?,
-        lift_id = ?,
-        sex = ?,
-        weight_category_id = ?
+        ord = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
       data.name,
-      data.lift_id,
-      data.sex || null,
-      data.weight_category_id || null,
+      data.ord,
       id
     ]);
     
@@ -240,14 +209,14 @@ class Flight {
   static async addAthleteToGroup(data) {
     const sql = `
       INSERT INTO group_entries (
-        group_id, registration_id, start_order
+        group_id, reg_id, start_ord
       ) VALUES (?, ?, ?)
     `;
     
     const result = await run(sql, [
       data.group_id,
-      data.registration_id,
-      data.start_order || null
+      data.reg_id,
+      data.start_ord
     ]);
     
     return result.lastID;
@@ -262,22 +231,21 @@ class Flight {
     const sql = `
       SELECT 
         ge.*,
-        a.name as athlete_name,
-        a.surname as athlete_surname,
+        a.first_name as athlete_first_name,
+        a.last_name as athlete_last_name,
+        a.cf as athlete_cf,
         a.birth_date,
         a.sex,
         r.bodyweight_kg,
-        r.lot_number,
-        r.team,
         wc.name as weight_category_name,
         ac.name as age_category_name
       FROM group_entries ge
-      INNER JOIN registrations r ON ge.registration_id = r.id
+      INNER JOIN registrations r ON ge.reg_id = r.id
       INNER JOIN athletes a ON r.athlete_id = a.id
-      LEFT JOIN weight_categories wc ON r.weight_category_id = wc.id
-      LEFT JOIN age_categories ac ON r.age_category_id = ac.id
+      LEFT JOIN weight_categories wc ON r.weight_cat_id = wc.id
+      LEFT JOIN age_categories ac ON r.age_cat_id = ac.id
       WHERE ge.group_id = ?
-      ORDER BY ge.start_order, a.surname, a.name
+      ORDER BY ge.start_ord, a.last_name, a.first_name
     `;
     return await all(sql, [groupId]);
   }
@@ -285,12 +253,12 @@ class Flight {
   /**
    * Update athlete start order in group
    * @param {number} entryId - Entry ID
-   * @param {number} startOrder - New start order
+   * @param {number} startOrd - New start order
    * @returns {Promise<number>} Number of rows affected
    */
-  static async updateStartOrder(entryId, startOrder) {
-    const sql = 'UPDATE group_entries SET start_order = ? WHERE id = ?';
-    const result = await run(sql, [startOrder, entryId]);
+  static async updateStartOrder(entryId, startOrd) {
+    const sql = 'UPDATE group_entries SET start_ord = ? WHERE id = ?';
+    const result = await run(sql, [startOrd, entryId]);
     return result.changes;
   }
 
@@ -307,17 +275,17 @@ class Flight {
 
   /**
    * Check if athlete is in a group
-   * @param {number} registrationId - Registration ID
+   * @param {number} regId - Registration ID
    * @param {number} groupId - Group ID
    * @returns {Promise<boolean>}
    */
-  static async isAthleteInGroup(registrationId, groupId) {
+  static async isAthleteInGroup(regId, groupId) {
     const sql = `
       SELECT COUNT(*) as count 
       FROM group_entries 
-      WHERE registration_id = ? AND group_id = ?
+      WHERE reg_id = ? AND group_id = ?
     `;
-    const result = await get(sql, [registrationId, groupId]);
+    const result = await get(sql, [regId, groupId]);
     return result.count > 0;
   }
 

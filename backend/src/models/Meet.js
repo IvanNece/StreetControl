@@ -16,20 +16,19 @@ class Meet {
   static async create(data) {
     const sql = `
       INSERT INTO meets (
-        code, name, location, start_date, end_date,
-        meet_type_id, status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        federation_id, meet_code, name, meet_type_id, 
+        start_date, level, regulation_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
     
     const result = await run(sql, [
-      data.code,
+      data.federation_id || null,
+      data.meet_code,
       data.name,
-      data.location || null,
-      data.start_date,
-      data.end_date || null,
       data.meet_type_id,
-      data.status || 'PREPARATION',
-      data.notes || null
+      data.start_date,
+      data.level,
+      data.regulation_code
     ]);
     
     return result.lastID;
@@ -44,8 +43,7 @@ class Meet {
     const sql = `
       SELECT 
         m.*,
-        mt.name as meet_type_name,
-        mt.description as meet_type_description
+        mt.name as meet_type_name
       FROM meets m
       LEFT JOIN meet_types mt ON m.meet_type_id = mt.id
       WHERE m.id = ?
@@ -54,29 +52,28 @@ class Meet {
   }
 
   /**
-   * Find meet by code
-   * @param {string} code - Unique meet code
+   * Find meet by meet_code
+   * @param {string} meetCode - Unique meet code
    * @returns {Promise<Object|null>}
    */
-  static async findByCode(code) {
+  static async findByCode(meetCode) {
     const sql = `
       SELECT 
         m.*,
-        mt.name as meet_type_name,
-        mt.description as meet_type_description
+        mt.name as meet_type_name
       FROM meets m
       LEFT JOIN meet_types mt ON m.meet_type_id = mt.id
-      WHERE m.code = ?
+      WHERE m.meet_code = ?
     `;
-    return await get(sql, [code]);
+    return await get(sql, [meetCode]);
   }
 
   /**
    * Get all meets
-   * @param {string} status - Optional: filter by status
+   * @param {string} level - Optional: filter by level ('REGIONALE' | 'NAZIONALE')
    * @returns {Promise<Array>}
    */
-  static async findAll(status = null) {
+  static async findAll(level = null) {
     let sql = `
       SELECT 
         m.*,
@@ -86,9 +83,9 @@ class Meet {
     `;
     
     const params = [];
-    if (status) {
-      sql += ' WHERE m.status = ?';
-      params.push(status);
+    if (level) {
+      sql += ' WHERE m.level = ?';
+      params.push(level);
     }
     
     sql += ' ORDER BY m.start_date DESC, m.name';
@@ -104,41 +101,27 @@ class Meet {
   static async update(id, data) {
     const sql = `
       UPDATE meets SET
-        code = ?,
+        federation_id = ?,
+        meet_code = ?,
         name = ?,
-        location = ?,
-        start_date = ?,
-        end_date = ?,
         meet_type_id = ?,
-        status = ?,
-        notes = ?
+        start_date = ?,
+        level = ?,
+        regulation_code = ?
       WHERE id = ?
     `;
     
     const result = await run(sql, [
-      data.code,
+      data.federation_id || null,
+      data.meet_code,
       data.name,
-      data.location || null,
-      data.start_date,
-      data.end_date || null,
       data.meet_type_id,
-      data.status,
-      data.notes || null,
+      data.start_date,
+      data.level,
+      data.regulation_code,
       id
     ]);
     
-    return result.changes;
-  }
-
-  /**
-   * Update meet status
-   * @param {number} id - Meet ID
-   * @param {string} status - New status
-   * @returns {Promise<number>} Number of rows affected
-   */
-  static async updateStatus(id, status) {
-    const sql = 'UPDATE meets SET status = ? WHERE id = ?';
-    const result = await run(sql, [status, id]);
     return result.changes;
   }
 
@@ -172,7 +155,7 @@ class Meet {
       LEFT JOIN registrations r ON m.id = r.meet_id
       LEFT JOIN flights f ON m.id = f.meet_id
       LEFT JOIN groups g ON f.id = g.flight_id
-      LEFT JOIN attempts a ON r.id = a.registration_id
+      LEFT JOIN attempts a ON r.id = a.reg_id
       WHERE m.id = ?
       GROUP BY m.id
     `;
@@ -203,12 +186,11 @@ class Meet {
       SELECT 
         l.id,
         l.name,
-        l.abbrev,
-        mtl.ord
+        mtl.sequence
       FROM meet_type_lifts mtl
       INNER JOIN lifts l ON mtl.lift_id = l.id
       WHERE mtl.meet_type_id = ?
-      ORDER BY mtl.ord
+      ORDER BY mtl.sequence
     `;
     const lifts = await all(liftsSql, [meet.meet_type_id]);
 
@@ -220,13 +202,13 @@ class Meet {
 
   /**
    * Check if meet code exists
-   * @param {string} code - Meet code
+   * @param {string} meetCode - Meet code
    * @param {number} excludeId - Optional: ID to exclude from check (for updates)
    * @returns {Promise<boolean>}
    */
-  static async codeExists(code, excludeId = null) {
-    let sql = 'SELECT COUNT(*) as count FROM meets WHERE code = ?';
-    const params = [code];
+  static async codeExists(meetCode, excludeId = null) {
+    let sql = 'SELECT COUNT(*) as count FROM meets WHERE meet_code = ?';
+    const params = [meetCode];
     
     if (excludeId) {
       sql += ' AND id != ?';
@@ -238,30 +220,31 @@ class Meet {
   }
 
   /**
-   * Get active meet (status = IN_PROGRESS)
-   * @returns {Promise<Object|null>}
+   * Find meets by federation
+   * @param {number} federationId - Federation ID
+   * @returns {Promise<Array>}
    */
-  static async getActiveMeet() {
+  static async findByFederation(federationId) {
     const sql = `
       SELECT 
         m.*,
         mt.name as meet_type_name
       FROM meets m
       LEFT JOIN meet_types mt ON m.meet_type_id = mt.id
-      WHERE m.status = 'IN_PROGRESS'
-      LIMIT 1
+      WHERE m.federation_id = ?
+      ORDER BY m.start_date DESC
     `;
-    return await get(sql);
+    return await all(sql, [federationId]);
   }
 
   /**
-   * Count meets by status
-   * @param {string} status - Meet status
+   * Count meets by level
+   * @param {string} level - Meet level
    * @returns {Promise<number>}
    */
-  static async countByStatus(status) {
-    const sql = 'SELECT COUNT(*) as count FROM meets WHERE status = ?';
-    const result = await get(sql, [status]);
+  static async countByLevel(level) {
+    const sql = 'SELECT COUNT(*) as count FROM meets WHERE level = ?';
+    const result = await get(sql, [level]);
     return result.count;
   }
 }
